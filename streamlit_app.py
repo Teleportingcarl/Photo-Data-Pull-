@@ -24,8 +24,6 @@ def _render_report(result: PhotoVerdict) -> None:
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**File type**")
-        st.write(result.file_type or "Unknown")
         st.markdown("**Device make**")
         st.write(result.make or "Unknown")
         st.markdown("**Device model**")
@@ -53,10 +51,7 @@ def main() -> None:
     st.title("Photo Data Puller")
     st.write("Drop a photo to check for real-world camera traits.")
 
-    upload = st.file_uploader(
-        "Drop or select a photo",
-        type=["jpg", "jpeg", "png", "tif", "tiff", "webp", "bmp"],
-    )
+    upload = st.file_uploader("Drop or select a JPEG photo", type=["jpg", "jpeg"])
     if upload:
         path = _save_upload(upload)
         result = analyze_photo(path)

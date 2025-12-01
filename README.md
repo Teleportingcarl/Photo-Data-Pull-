@@ -1,6 +1,6 @@
 # Photo Data Puller
 
-A lightweight tool for checking whether a photo likely came from a real-world camera lens. Works with JPEG, PNG, TIFF, WebP, and BMP files. Includes:
+A lightweight tool for checking whether a JPEG likely came from a real-world camera lens. Includes:
 
 - **CLI**: quick batch analysis with JSON output.
 - **Drop UI**: Streamlit app with drag-and-drop uploader and readable results.
@@ -10,7 +10,7 @@ A lightweight tool for checking whether a photo likely came from a real-world ca
 ```bash
 python photo_data_puller.py path/to/photo.jpg
 # or analyze multiple images at once
-python photo_data_puller.py first.jpg second.png third.webp
+python photo_data_puller.py first.jpg second.jpg
 ```
 
 ## Streamlit interface
@@ -20,4 +20,4 @@ pip install streamlit
 streamlit run streamlit_app.py
 ```
 
-Upload a photo and the app will show device hints, resolution, timestamps, GPS indicators, and a JSON report.
+Upload a JPEG and the app will show device hints, resolution, timestamps, GPS indicators, and a JSON report.

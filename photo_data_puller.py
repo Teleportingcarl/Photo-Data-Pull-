@@ -1,8 +1,7 @@
 """Photo Data Puller
 
-Analyze photo files for traits that suggest capture with a real-world camera lens.
-Supports common formats (JPEG, PNG, TIFF, WebP, BMP) and offers both a CLI and a
-Streamlit UI for quick drop-and-check workflows.
+Analyze JPEG images for traits that suggest capture with a real-world camera lens.
+Provides both a CLI and a Streamlit UI for quick drop-and-check workflows.
 """
 from __future__ import annotations
 
@@ -125,7 +124,6 @@ class PhotoVerdict:
     file: Path
     verdict: str
     score: int
-    file_type: str
     make: Optional[str]
     model: Optional[str]
     resolution: Optional[str]
@@ -140,7 +138,6 @@ class PhotoVerdict:
             "file": str(self.file),
             "verdict": self.verdict,
             "score": self.score,
-            "file_type": self.file_type,
             "make": self.make,
             "model": self.model,
             "resolution": self.resolution,
@@ -156,20 +153,25 @@ def read_file_bytes(path: Path) -> bytes:
     return path.read_bytes()
 
 
-def has_exif_from_text(ascii_meta: str) -> bool:
-    return "Exif" in ascii_meta or "Make" in ascii_meta or "Model" in ascii_meta
+def has_exif(data: bytes) -> bool:
+    return b"Exif" in data[:4096]
 
 
-def _find_in_ascii(ascii_data: str, search: Iterable[str]) -> Optional[str]:
+def _find_in_ascii(data: bytes, search: Iterable[str]) -> Optional[str]:
+    ascii_data = data.decode("latin-1", errors="ignore")
     for candidate in search:
         if candidate in ascii_data:
             return candidate
     return None
 
 
-def extract_make_model(ascii_data: str) -> Tuple[Optional[str], Optional[str]]:
+def extract_make_model(data: bytes) -> Tuple[Optional[str], Optional[str]]:
     try:
-        make = _find_in_ascii(ascii_data, KNOWN_MAKES)
+        idx = data.find(b"Exif")
+        if idx == -1:
+            return None, None
+        ascii_data = data[idx : idx + 16000].decode("latin-1", errors="ignore")
+        make = _find_in_ascii(ascii_data.encode("latin-1", errors="ignore"), KNOWN_MAKES)
 
         model = None
         if "iPhone" in ascii_data:
@@ -244,103 +246,6 @@ def detect_editing_tags(data: bytes) -> Optional[str]:
         return None
 
 
-def _sniff_file_type(data: bytes) -> str:
-    if data.startswith(b"\xFF\xD8"):
-        return "JPEG"
-    if data.startswith(b"\x89PNG"):
-        return "PNG"
-    if data.startswith(b"II*\x00") or data.startswith(b"MM\x00*"):
-        return "TIFF"
-    if data.startswith(b"RIFF") and b"WEBP" in data[8:16]:
-        return "WEBP"
-    if data.startswith(b"BM"):
-        return "BMP"
-    return "Unknown"
-
-
-def _png_dimensions(data: bytes) -> Tuple[Optional[int], Optional[int]]:
-    try:
-        return struct.unpack(">II", data[16:24])
-    except Exception:
-        return None, None
-
-
-def _bmp_dimensions(data: bytes) -> Tuple[Optional[int], Optional[int]]:
-    try:
-        width = struct.unpack("<I", data[18:22])[0]
-        height = struct.unpack("<I", data[22:26])[0]
-        return width, height
-    except Exception:
-        return None, None
-
-
-def _webp_dimensions(data: bytes) -> Tuple[Optional[int], Optional[int]]:
-    try:
-        if data[12:16] == b"VP8 " and len(data) >= 30:
-            width = struct.unpack("<H", data[26:28])[0] & 0x3FFF
-            height = struct.unpack("<H", data[28:30])[0] & 0x3FFF
-            return width, height
-        if data[12:16] == b"VP8L" and len(data) >= 25:
-            b0, b1, b2, b3 = data[21:25]
-            width = 1 + (((b1 & 0x3F) << 8) | b0)
-            height = 1 + (((b3 & 0xF) << 10) | (b2 << 2) | ((b1 & 0xC0) >> 6))
-            return width, height
-        if data[12:16] == b"VP8X" and len(data) >= 30:
-            width = 1 + int.from_bytes(data[24:27], "little")
-            height = 1 + int.from_bytes(data[27:30], "little")
-            return width, height
-    except Exception:
-        return None, None
-    return None, None
-
-
-def _tiff_dimensions(data: bytes) -> Tuple[Optional[int], Optional[int]]:
-    try:
-        width = height = None
-        endian = "<" if data[:2] == b"II" else ">"
-        offset = struct.unpack(f"{endian}I", data[4:8])[0]
-        if offset + 2 > len(data):
-            return None, None
-        num_entries = struct.unpack(f"{endian}H", data[offset : offset + 2])[0]
-        for i in range(num_entries):
-            start = offset + 2 + i * 12
-            if start + 12 > len(data):
-                break
-            tag = struct.unpack(f"{endian}H", data[start : start + 2])[0]
-            value_offset = start + 8
-            if tag == 256:
-                width = struct.unpack(f"{endian}I", data[value_offset : value_offset + 4])[0]
-            elif tag == 257:
-                height = struct.unpack(f"{endian}I", data[value_offset : value_offset + 4])[0]
-            if "width" in locals() and "height" in locals():
-                return width, height
-    except Exception:
-        return None, None
-    return None, None
-
-
-def load_image_metadata(data: bytes) -> Tuple[str, Optional[int], Optional[int], str]:
-    file_type = _sniff_file_type(data)
-    width = height = None
-    if file_type == "PNG":
-        width, height = _png_dimensions(data)
-    elif file_type == "BMP":
-        width, height = _bmp_dimensions(data)
-    elif file_type == "WEBP":
-        width, height = _webp_dimensions(data)
-    elif file_type == "TIFF":
-        width, height = _tiff_dimensions(data)
-    elif file_type == "JPEG":
-        width, height = jpeg_resolution(data)
-
-    ascii_meta = ""
-    try:
-        ascii_meta = data.decode("latin-1", errors="ignore")
-    except Exception:
-        pass
-    return file_type, width, height, ascii_meta
-
-
 def detect_screenshot(
     exif_present: bool, make: Optional[str], model: Optional[str], width: Optional[int], height: Optional[int]
 ) -> bool:
@@ -384,35 +289,28 @@ def extract_extra_metadata(data: bytes) -> Tuple[Optional[str], Optional[str], b
 
 def analyze_photo(path: Path) -> PhotoVerdict:
     data = read_file_bytes(path)
-    file_type, width, height, ascii_meta = load_image_metadata(data)
-    if not ascii_meta:
-        try:
-            ascii_meta = data.decode("latin-1", errors="ignore")
-        except Exception:
-            ascii_meta = ""
     reasons: List[str] = []
     score = 0
 
-    exif_present = has_exif_from_text(ascii_meta) or (b"Exif" in data[:4096])
+    exif_present = has_exif(data)
     if exif_present:
         score += 1
     else:
         reasons.append("Missing EXIF metadata")
 
-    make, model = extract_make_model(ascii_meta)
+    make, model = extract_make_model(data)
     if make or model:
         score += 1
     else:
         reasons.append("No recognizable make/model detected")
 
-    qtables = jpeg_quant_tables(data) if file_type.upper() == "JPEG" else 0
+    qtables = jpeg_quant_tables(data)
     if qtables > 0:
         score += 1
-    elif file_type.upper() == "JPEG":
+    else:
         reasons.append("No JPEG quantization tables found")
 
-    if not width or not height:
-        width, height = jpeg_resolution(data)
+    width, height = jpeg_resolution(data)
     ok, msg = size_resolution_check(data, width, height)
     if ok:
         score += 1
@@ -452,7 +350,6 @@ def analyze_photo(path: Path) -> PhotoVerdict:
         file=path,
         verdict=verdict,
         score=score,
-        file_type=file_type,
         make=make,
         model=model,
         resolution=resolution_str,
@@ -475,7 +372,7 @@ def run_cli(paths: List[Path]) -> None:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Analyze photo files to estimate whether they came from a real-world lens.",
+        description="Analyze JPEG photos to estimate whether they came from a real-world lens.",
     )
     parser.add_argument(
         "paths",
